@@ -1,6 +1,7 @@
 # ============================================================
 # SCHOOL DROPOUT RISK PREDICTION
 # Professional Streamlit Application
+# REGRESSION VERSION
 # ============================================================
 
 import streamlit as st
@@ -11,17 +12,14 @@ import seaborn as sns
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    confusion_matrix,
-    classification_report,
-    roc_curve
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    mean_absolute_percentage_error
 )
+
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -33,6 +31,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 # ============================================================
 # CUSTOM CSS
@@ -215,7 +214,10 @@ def generate_data(n=2500):
         )
     })
 
-    # Risk calculations
+
+    # ========================================================
+    # RISK SCORE CALCULATION
+    # ========================================================
 
     attendance_risk = (
         80 - data["Attendance_Percentage"]
@@ -233,7 +235,9 @@ def generate_data(n=2500):
         data["Distance_From_School_KM"]
     ) / 8
 
-    failure_risk = data["Previous_Failures"]
+    failure_risk = (
+        data["Previous_Failures"]
+    )
 
     discipline_risk = (
         data["Disciplinary_Incidents"]
@@ -254,6 +258,11 @@ def generate_data(n=2500):
     activity_risk = (
         1 - data["Extracurricular_Participation"]
     )
+
+
+    # ========================================================
+    # CONTINUOUS TARGET
+    # ========================================================
 
     risk_score = (
 
@@ -280,43 +289,68 @@ def generate_data(n=2500):
         np.random.normal(0, 0.8, n)
     )
 
-    probability = 1 / (
-        1 + np.exp(-risk_score)
-    )
-
-    data["Dropout"] = np.random.binomial(
-        1,
-        probability
-    )
+    data["Risk_Score"] = risk_score
 
     return data
 
 
 # ============================================================
-# TRAIN MODEL
+# TRAIN REGRESSION MODEL
 # ============================================================
 
 @st.cache_resource
-def train_model(data):
+def train_regression_model(data):
 
-    X = data.drop(
-        "Dropout",
-        axis=1
-    )
+    features = [
 
-    y = data["Dropout"]
+        "Age",
+
+        "Attendance_Percentage",
+
+        "Average_Grade",
+
+        "Study_Hours_Per_Week",
+
+        "Family_Income",
+
+        "Distance_From_School_KM",
+
+        "Previous_Failures",
+
+        "Disciplinary_Incidents",
+
+        "Parental_Education_Years",
+
+        "Internet_Access",
+
+        "Extracurricular_Participation"
+    ]
+
+
+    X = data[features]
+
+    y = data["Risk_Score"]
+
+
+    # ========================================================
+    # TRAIN TEST SPLIT
+    # ========================================================
 
     X_train, X_test, y_train, y_test = train_test_split(
 
         X,
+
         y,
 
         test_size=0.20,
 
-        random_state=42,
-
-        stratify=y
+        random_state=42
     )
+
+
+    # ========================================================
+    # STANDARDIZATION
+    # ========================================================
 
     scaler = StandardScaler()
 
@@ -328,7 +362,12 @@ def train_model(data):
         X_test
     )
 
-    model = RandomForestClassifier(
+
+    # ========================================================
+    # RANDOM FOREST REGRESSOR
+    # ========================================================
+
+    model = RandomForestRegressor(
 
         n_estimators=250,
 
@@ -338,64 +377,101 @@ def train_model(data):
 
         min_samples_leaf=2,
 
-        class_weight="balanced",
-
         random_state=42
     )
 
+
     model.fit(
+
         X_train_scaled,
+
         y_train
     )
 
+
+    # ========================================================
+    # PREDICTIONS
+    # ========================================================
+
     y_pred = model.predict(
+
         X_test_scaled
     )
 
-    y_probability = model.predict_proba(
-        X_test_scaled
-    )[:, 1]
+
+    # ========================================================
+    # REGRESSION METRICS
+    # ========================================================
+
+    mae = mean_absolute_error(
+
+        y_test,
+
+        y_pred
+    )
+
+
+    mse = mean_squared_error(
+
+        y_test,
+
+        y_pred
+    )
+
+
+    rmse = np.sqrt(mse)
+
+
+    r2 = r2_score(
+
+        y_test,
+
+        y_pred
+    )
+
+
+    # MAPE can become unstable when actual values are near zero.
+    # We calculate it safely using a small denominator.
+
+    denominator = np.maximum(
+        np.abs(y_test),
+        1e-8
+    )
+
+    mape = np.mean(
+        np.abs(
+            (y_test - y_pred) /
+            denominator
+        )
+    )
+
 
     metrics = {
 
-        "accuracy":
-            accuracy_score(
-                y_test,
-                y_pred
-            ),
+        "mae": mae,
 
-        "precision":
-            precision_score(
-                y_test,
-                y_pred
-            ),
+        "mse": mse,
 
-        "recall":
-            recall_score(
-                y_test,
-                y_pred
-            ),
+        "rmse": rmse,
 
-        "f1":
-            f1_score(
-                y_test,
-                y_pred
-            ),
+        "r2": r2,
 
-        "auc":
-            roc_auc_score(
-                y_test,
-                y_probability
-            )
+        "mape": mape
     }
+
+
+    # ========================================================
+    # FEATURE IMPORTANCE
+    # ========================================================
 
     importance = pd.DataFrame({
 
         "Feature":
-            X.columns,
+            features,
 
         "Importance":
             model.feature_importances_
+
     }).sort_values(
 
         "Importance",
@@ -403,14 +479,21 @@ def train_model(data):
         ascending=False
     )
 
+
     return (
+
         model,
+
         scaler,
+
         X_test,
+
         y_test,
+
         y_pred,
-        y_probability,
+
         metrics,
+
         importance
     )
 
@@ -421,16 +504,23 @@ def train_model(data):
 
 data = generate_data()
 
+
 (
     model,
+
     scaler,
+
     X_test,
+
     y_test,
+
     y_pred,
-    y_probability,
+
     metrics,
+
     importance
-) = train_model(data)
+
+) = train_regression_model(data)
 
 
 # ============================================================
@@ -449,27 +539,33 @@ with st.sidebar:
 
     st.divider()
 
+
     page = st.radio(
 
         "Navigation",
 
         [
+
             "🏠 Dashboard",
+
             "🔮 Student Prediction",
+
             "📊 Data Analysis",
-            "🤖 Model Performance",
-            "ℹ️ About Project"
+
+            "📈 Regression Evaluation"
         ]
     )
 
+
     st.divider()
+
 
     st.caption(
         "Machine Learning Model"
     )
 
     st.caption(
-        "Random Forest Classifier"
+        "Random Forest Regressor"
     )
 
     st.caption(
@@ -507,116 +603,63 @@ if page == "🏠 Dashboard":
         unsafe_allow_html=True
     )
 
-    dropout_rate = (
-        data["Dropout"].mean()
-        * 100
-    )
 
-    col1, col2, col3, col4 = st.columns(4)
+    # ========================================================
+    # DASHBOARD METRICS
+    # ========================================================
 
-    with col1:
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-title">
-                    STUDENTS
-                </div>
-                <div class="metric-value">
-                    {len(data):,}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    with col2:
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-title">
-                    DROPOUT RATE
-                </div>
-                <div class="metric-value">
-                    {dropout_rate:.1f}%
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    with col3:
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-title">
-                    MODEL ACCURACY
-                </div>
-                <div class="metric-value">
-                    {metrics['accuracy']:.1%}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    with col4:
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-title">
-                    ROC-AUC
-                </div>
-                <div class="metric-value">
-                    {metrics['auc']:.1%}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    st.write("")
+    # ========================================================
+    # RISK SCORE DISTRIBUTION
+    # ========================================================
 
     col1, col2 = st.columns(2)
+
 
     with col1:
 
         st.subheader(
-            "Dropout Distribution"
+            "Risk Score Distribution"
         )
 
+
         fig, ax = plt.subplots(
+
             figsize=(7, 4)
         )
 
-        sns.countplot(
-            x="Dropout",
+
+        sns.histplot(
+
             data=data,
+
+            x="Risk_Score",
+
+            kde=True,
+
             ax=ax
         )
 
+
         ax.set_xlabel(
-            "Dropout Status"
+            "Risk Score"
         )
 
         ax.set_ylabel(
             "Students"
         )
 
-        ax.set_xticklabels(
-            [
-                "Remaining Enrolled",
-                "Dropout"
-            ]
-        )
 
         st.pyplot(
+
             fig,
+
             use_container_width=True
         )
+
+
+    # ========================================================
+    # FEATURE IMPORTANCE
+    # ========================================================
 
     with col2:
 
@@ -624,11 +667,15 @@ if page == "🏠 Dashboard":
             "Top Predictive Factors"
         )
 
+
         top_features = importance.head(8)
 
+
         fig, ax = plt.subplots(
+
             figsize=(7, 4)
         )
+
 
         sns.barplot(
 
@@ -641,22 +688,28 @@ if page == "🏠 Dashboard":
             ax=ax
         )
 
+
         ax.set_title(
             "Random Forest Feature Importance"
         )
 
+
         st.pyplot(
+
             fig,
+
             use_container_width=True
         )
+
 
     st.info(
         """
         **Data-thinking approach:** This dashboard uses academic,
         attendance, socioeconomic, and behavioral indicators to
-        estimate dropout risk. In a real educational setting,
-        predictions should support human intervention rather than
-        automatically determine outcomes for students.
+        estimate a continuous student dropout-risk score.
+x
+        The regression model produces a numerical risk estimate
+        rather than a binary dropout classification.
         """
     )
 
@@ -674,10 +727,12 @@ elif page == "🔮 Student Prediction":
         unsafe_allow_html=True
     )
 
+
     st.write(
-        "Enter student information below to generate a model-based "
-        "dropout risk estimate."
+        "Enter student information below to generate a "
+        "continuous model-based dropout risk score."
     )
+
 
     with st.form(
         "student_form"
@@ -687,93 +742,167 @@ elif page == "🔮 Student Prediction":
             "Student Profile"
         )
 
+
         col1, col2, col3 = st.columns(3)
+
+
+        # ====================================================
+        # COLUMN 1
+        # ====================================================
 
         with col1:
 
             age = st.number_input(
+
                 "Age",
+
                 min_value=14,
+
                 max_value=25,
+
                 value=16
             )
 
+
             attendance = st.slider(
+
                 "Attendance (%)",
+
                 0,
+
                 100,
+
                 75
             )
 
+
             grade = st.slider(
+
                 "Average Grade",
+
                 0,
+
                 100,
+
                 65
             )
 
+
             study_hours = st.slider(
+
                 "Study Hours / Week",
+
                 0,
+
                 40,
+
                 10
             )
+
+
+        # ====================================================
+        # COLUMN 2
+        # ====================================================
 
         with col2:
 
             income = st.number_input(
+
                 "Family Income",
+
                 min_value=5000,
+
                 max_value=200000,
+
                 value=45000,
+
                 step=5000
             )
 
+
             distance = st.slider(
+
                 "Distance from School (KM)",
+
                 0.0,
+
                 50.0,
+
                 4.0,
+
                 0.5
             )
 
+
             failures = st.number_input(
+
                 "Previous Failures",
+
                 min_value=0,
+
                 max_value=10,
+
                 value=0
             )
 
+
             discipline = st.number_input(
+
                 "Disciplinary Incidents",
+
                 min_value=0,
+
                 max_value=10,
+
                 value=0
             )
+
+
+        # ====================================================
+        # COLUMN 3
+        # ====================================================
 
         with col3:
 
             parent_education = st.slider(
+
                 "Parental Education (Years)",
+
                 0,
+
                 20,
+
                 12
             )
 
+
             internet = st.selectbox(
+
                 "Internet Access",
+
                 ["Yes", "No"]
             )
+
 
             extracurricular = st.selectbox(
+
                 "Extracurricular Participation",
+
                 ["Yes", "No"]
             )
 
+
         submitted = st.form_submit_button(
-            "🔍 Predict Dropout Risk",
+
+            "🔍 Predict Risk Score",
+
             use_container_width=True
         )
+
+
+    # ========================================================
+    # PREDICTION
+    # ========================================================
 
     if submitted:
 
@@ -806,7 +935,11 @@ elif page == "🔮 Student Prediction":
                 [parent_education],
 
             "Internet_Access":
-                [1 if internet == "Yes" else 0],
+                [
+                    1
+                    if internet == "Yes"
+                    else 0
+                ],
 
             "Extracurricular_Participation":
                 [
@@ -816,133 +949,185 @@ elif page == "🔮 Student Prediction":
                 ]
         })
 
+
+        # ====================================================
+        # SCALE INPUT
+        # ====================================================
+
         scaled = scaler.transform(
+
             new_student
         )
 
-        probability = model.predict_proba(
-            scaled
-        )[0][1]
 
-        probability_percentage = (
-            probability * 100
-        )
+        # ====================================================
+        # REGRESSION PREDICTION
+        # ====================================================
 
-        prediction = model.predict(
+        predicted_risk = model.predict(
+
             scaled
         )[0]
 
+
         st.divider()
+
 
         st.subheader(
             "Prediction Result"
         )
 
+
         col1, col2 = st.columns(
+
             [1, 2]
         )
+
 
         with col1:
 
             st.metric(
-                "Predicted Risk",
-                f"{probability_percentage:.1f}%"
+
+                "Predicted Risk Score",
+
+                f"{predicted_risk:.2f}"
             )
+
 
         with col2:
 
-            if probability >= 0.60:
+            # -----------------------------------------------
+            # Risk level is only a presentation aid
+            # -----------------------------------------------
+
+            if predicted_risk >= 3:
 
                 st.markdown(
+
                     f"""
                     <div class="risk-high">
 
-                    <h3>🔴 Higher Predicted Risk</h3>
+                    <h3>🔴 Higher Risk Score</h3>
 
                     <p>
-                    The model estimates a dropout probability
-                    of <strong>
-                    {probability_percentage:.1f}%
-                    </strong>.
+                    The regression model predicts a risk score
+                    of <strong>{predicted_risk:.2f}</strong>.
                     </p>
 
                     </div>
                     """,
+
                     unsafe_allow_html=True
                 )
 
-            elif probability >= 0.30:
+
+            elif predicted_risk >= 1:
 
                 st.markdown(
+
                     f"""
                     <div class="risk-medium">
 
-                    <h3>🟠 Moderate Predicted Risk</h3>
+                    <h3>🟠 Moderate Risk Score</h3>
 
                     <p>
-                    The model estimates a dropout probability
-                    of <strong>
-                    {probability_percentage:.1f}%
-                    </strong>.
+                    The regression model predicts a risk score
+                    of <strong>{predicted_risk:.2f}</strong>.
                     </p>
 
                     </div>
                     """,
+
                     unsafe_allow_html=True
                 )
+
 
             else:
 
                 st.markdown(
+
                     f"""
                     <div class="risk-low">
 
-                    <h3>🟢 Lower Predicted Risk</h3>
+                    <h3>🟢 Lower Risk Score</h3>
 
                     <p>
-                    The model estimates a dropout probability
-                    of <strong>
-                    {probability_percentage:.1f}%
-                    </strong>.
+                    The regression model predicts a risk score
+                    of <strong>{predicted_risk:.2f}</strong>.
                     </p>
 
                     </div>
                     """,
+
                     unsafe_allow_html=True
                 )
 
+
         st.progress(
-            float(probability)
+
+            min(
+                max(
+                    float(
+                        (predicted_risk + 5) / 10
+                    ),
+                    0.0
+                ),
+                1.0
+            )
         )
 
+
         st.caption(
-            "The probability is a model output, not a definitive "
-            "statement about the student's future."
+            "The risk score is a model-generated continuous "
+            "estimate and should not be interpreted as a definitive "
+            "statement about a student's future."
         )
+
+
+        # ====================================================
+        # STUDENT INFORMATION
+        # ====================================================
 
         st.subheader(
             "Student Information"
         )
 
+
         display_student = new_student.copy()
 
+
         display_student.columns = [
+
             "Age",
+
             "Attendance (%)",
+
             "Average Grade",
+
             "Study Hours / Week",
+
             "Family Income",
+
             "Distance (KM)",
+
             "Previous Failures",
+
             "Disciplinary Incidents",
+
             "Parental Education",
+
             "Internet Access",
+
             "Extracurricular"
         ]
 
+
         st.dataframe(
+
             display_student,
+
             use_container_width=True,
+
             hide_index=True
         )
 
@@ -954,13 +1139,17 @@ elif page == "🔮 Student Prediction":
 elif page == "📊 Data Analysis":
 
     st.markdown(
+
         '<div class="section-heading">'
         '📊 Student Data Analysis'
         '</div>',
+
         unsafe_allow_html=True
     )
 
+
     col1, col2 = st.columns(2)
+
 
     with col1:
 
@@ -969,16 +1158,29 @@ elif page == "📊 Data Analysis":
             "Select a feature",
 
             [
+
+                "Age",
+
                 "Attendance_Percentage",
+
                 "Average_Grade",
+
                 "Study_Hours_Per_Week",
+
                 "Family_Income",
+
                 "Distance_From_School_KM",
+
                 "Previous_Failures",
+
                 "Disciplinary_Incidents",
-                "Parental_Education_Years"
+
+                "Parental_Education_Years",
+
+                "Risk_Score"
             ]
         )
+
 
     with col2:
 
@@ -987,331 +1189,508 @@ elif page == "📊 Data Analysis":
             "Chart type",
 
             [
+
                 "Distribution",
-                "Box Plot"
+
+                "Box Plot",
+
+                "Risk Score Relationship"
             ]
         )
 
+
+    # ========================================================
+    # CHART
+    # ========================================================
+
     fig, ax = plt.subplots(
+
         figsize=(10, 5)
     )
+
 
     if chart_type == "Distribution":
 
         sns.histplot(
+
             data=data,
+
             x=selected_feature,
-            hue="Dropout",
+
             kde=True,
+
             ax=ax
         )
+
+
+        ax.set_title(
+
+            f"Distribution of {selected_feature}"
+        )
+
+
+    elif chart_type == "Box Plot":
+
+        sns.boxplot(
+
+            data=data,
+
+            y=selected_feature,
+
+            ax=ax
+        )
+
+
+        ax.set_title(
+
+            f"Box Plot of {selected_feature}"
+        )
+
 
     else:
 
-        sns.boxplot(
-            data=data,
-            x="Dropout",
-            y=selected_feature,
-            ax=ax
-        )
+        if selected_feature == "Risk_Score":
+
+            st.warning(
+                "Select a feature other than Risk_Score "
+                "for the relationship chart."
+            )
+
+        else:
+
+            sns.scatterplot(
+
+                data=data,
+
+                x=selected_feature,
+
+                y="Risk_Score",
+
+                alpha=0.5,
+
+                ax=ax
+            )
+
+
+            ax.set_title(
+
+                f"{selected_feature} vs Risk Score"
+            )
+
+            ax.set_ylabel(
+                "Risk Score"
+            )
+
 
     st.pyplot(
+
         fig,
+
         use_container_width=True
     )
 
+
+    # ========================================================
+    # DATASET PREVIEW
+    # ========================================================
+
     st.subheader(
+
         "Dataset Preview"
     )
 
+
     st.dataframe(
+
         data.head(100),
+
         use_container_width=True
     )
 
+
+    # ========================================================
+    # DESCRIPTIVE STATISTICS
+    # ========================================================
+
     st.subheader(
+
         "Descriptive Statistics"
     )
 
+
     st.dataframe(
+
         data.describe(),
+
         use_container_width=True
     )
 
 
 # ============================================================
-# MODEL PERFORMANCE
+# REGRESSION EVALUATION
 # ============================================================
 
-elif page == "🤖 Model Performance":
+elif page == "📈 Regression Evaluation":
 
     st.markdown(
+
         '<div class="section-heading">'
-        '🤖 Machine Learning Model Performance'
+        '📈 Regression Evaluation'
         '</div>',
+
         unsafe_allow_html=True
     )
 
+
     st.write(
-        "The application uses a Random Forest Classifier."
+
+        "This section evaluates the Random Forest Regressor "
+        "using standard regression evaluation metrics."
     )
+
+
+    # ========================================================
+    # METRICS
+    # ========================================================
+
+    st.subheader(
+
+        "Regression Evaluation Metrics"
+    )
+
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
+
     with col1:
+
         st.metric(
-            "Accuracy",
-            f"{metrics['accuracy']:.2%}"
+
+            "MAE",
+
+            f"{metrics['mae']:.3f}"
         )
+
 
     with col2:
+
         st.metric(
-            "Precision",
-            f"{metrics['precision']:.2%}"
+
+            "MSE",
+
+            f"{metrics['mse']:.3f}"
         )
+
 
     with col3:
+
         st.metric(
-            "Recall",
-            f"{metrics['recall']:.2%}"
+
+            "RMSE",
+
+            f"{metrics['rmse']:.3f}"
         )
+
 
     with col4:
+
         st.metric(
-            "F1 Score",
-            f"{metrics['f1']:.2%}"
+
+            "R² Score",
+
+            f"{metrics['r2']:.3f}"
         )
 
+
     with col5:
+
         st.metric(
-            "ROC-AUC",
-            f"{metrics['auc']:.2%}"
+
+            "MAPE",
+
+            f"{metrics['mape']:.2%}"
         )
+
 
     st.divider()
 
-    col1, col2 = st.columns(2)
 
-    with col1:
-
-        st.subheader(
-            "Confusion Matrix"
-        )
-
-        cm = confusion_matrix(
-            y_test,
-            y_pred
-        )
-
-        fig, ax = plt.subplots(
-            figsize=(6, 5)
-        )
-
-        sns.heatmap(
-            cm,
-            annot=True,
-            fmt="d",
-            cmap="Blues",
-            ax=ax,
-            xticklabels=[
-                "Not Dropout",
-                "Dropout"
-            ],
-            yticklabels=[
-                "Not Dropout",
-                "Dropout"
-            ]
-        )
-
-        ax.set_xlabel(
-            "Predicted"
-        )
-
-        ax.set_ylabel(
-            "Actual"
-        )
-
-        st.pyplot(
-            fig,
-            use_container_width=True
-        )
-
-    with col2:
-
-        st.subheader(
-            "ROC Curve"
-        )
-
-        fpr, tpr, _ = roc_curve(
-            y_test,
-            y_probability
-        )
-
-        fig, ax = plt.subplots(
-            figsize=(6, 5)
-        )
-
-        ax.plot(
-            fpr,
-            tpr,
-            label=f"AUC = {metrics['auc']:.3f}"
-        )
-
-        ax.plot(
-            [0, 1],
-            [0, 1],
-            linestyle="--"
-        )
-
-        ax.set_xlabel(
-            "False Positive Rate"
-        )
-
-        ax.set_ylabel(
-            "True Positive Rate"
-        )
-
-        ax.set_title(
-            "ROC Curve"
-        )
-
-        ax.legend()
-
-        st.pyplot(
-            fig,
-            use_container_width=True
-        )
+    # ========================================================
+    # ACTUAL VS PREDICTED
+    # ========================================================
 
     st.subheader(
+
+        "Actual vs Predicted Risk Score"
+    )
+
+
+    fig, ax = plt.subplots(
+
+        figsize=(9, 5)
+    )
+
+
+    ax.scatter(
+
+        y_test,
+
+        y_pred,
+
+        alpha=0.6
+    )
+
+
+    minimum = min(
+
+        y_test.min(),
+
+        y_pred.min()
+    )
+
+
+    maximum = max(
+
+        y_test.max(),
+
+        y_pred.max()
+    )
+
+
+    ax.plot(
+
+        [minimum, maximum],
+
+        [minimum, maximum],
+
+        linestyle="--"
+    )
+
+
+    ax.set_xlabel(
+
+        "Actual Risk Score"
+    )
+
+
+    ax.set_ylabel(
+
+        "Predicted Risk Score"
+    )
+
+
+    ax.set_title(
+
+        "Actual vs Predicted Risk Score"
+    )
+
+
+    st.pyplot(
+
+        fig,
+
+        use_container_width=True
+    )
+
+
+    st.divider()
+
+
+    # ========================================================
+    # RESIDUAL ANALYSIS
+    # ========================================================
+
+    st.subheader(
+
+        "Residual Analysis"
+    )
+
+
+    residuals = (
+
+        y_test -
+
+        y_pred
+    )
+
+
+    fig, ax = plt.subplots(
+
+        figsize=(9, 5)
+    )
+
+
+    ax.scatter(
+
+        y_pred,
+
+        residuals,
+
+        alpha=0.6
+    )
+
+
+    ax.axhline(
+
+        0,
+
+        linestyle="--"
+    )
+
+
+    ax.set_xlabel(
+
+        "Predicted Risk Score"
+    )
+
+
+    ax.set_ylabel(
+
+        "Residual"
+    )
+
+
+    ax.set_title(
+
+        "Residual Plot"
+    )
+
+
+    st.pyplot(
+
+        fig,
+
+        use_container_width=True
+    )
+
+
+    st.divider()
+
+
+    # ========================================================
+    # ERROR DISTRIBUTION
+    # ========================================================
+
+    st.subheader(
+
+        "Prediction Error Distribution"
+    )
+
+
+    fig, ax = plt.subplots(
+
+        figsize=(9, 5)
+    )
+
+
+    sns.histplot(
+
+        residuals,
+
+        kde=True,
+
+        ax=ax
+    )
+
+
+    ax.set_xlabel(
+
+        "Prediction Error"
+    )
+
+
+    ax.set_ylabel(
+
+        "Frequency"
+    )
+
+
+    ax.set_title(
+
+        "Distribution of Residuals"
+    )
+
+
+    st.pyplot(
+
+        fig,
+
+        use_container_width=True
+    )
+
+
+    st.divider()
+
+
+    # ========================================================
+    # FEATURE IMPORTANCE
+    # ========================================================
+
+    st.subheader(
+
         "Feature Importance"
     )
 
+
     st.dataframe(
+
         importance,
+
         use_container_width=True,
+
         hide_index=True
     )
 
-
-# ============================================================
-# ABOUT
-# ============================================================
-
-elif page == "ℹ️ About Project":
-
-    st.markdown(
-        '<div class="section-heading">'
-        'ℹ️ About the Project'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        """
-        <div class="info-box">
-
-        <h3>🎯 Objective</h3>
-
-        The objective of this project is to demonstrate how
-        <strong>Data Thinking</strong> and
-        <strong>Machine Learning</strong> can be combined to
-        investigate factors associated with student dropout.
-
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.subheader(
-        "Data Thinking Framework"
-    )
-
-    steps = {
-
-        "1️⃣ Define":
-            "Define student dropout as the social problem.",
-
-        "2️⃣ Collect":
-            "Collect academic, attendance, socioeconomic and behavioral data.",
-
-        "3️⃣ Prepare":
-            "Clean, transform and prepare the data.",
-
-        "4️⃣ Analyze":
-            "Explore relationships between student characteristics and dropout.",
-
-        "5️⃣ Model":
-            "Train a Random Forest classification model.",
-
-        "6️⃣ Evaluate":
-            "Evaluate accuracy, precision, recall, F1-score and ROC-AUC.",
-
-        "7️⃣ Act":
-            "Use predictions as signals for appropriate human support."
-    }
-
-    for title, description in steps.items():
-
-        st.markdown(
-            f"""
-            **{title}**
-
-            {description}
-            """
-        )
 
     st.divider()
 
+
+    # ========================================================
+    # METRIC EXPLANATION
+    # ========================================================
+
     st.subheader(
-        "Machine Learning Features"
+
+        "Metric Explanation"
     )
 
-    feature_table = pd.DataFrame({
 
-        "Feature": [
-            "Attendance",
-            "Average Grade",
-            "Study Hours",
-            "Family Income",
-            "Distance to School",
-            "Previous Failures",
-            "Disciplinary Incidents",
-            "Parental Education",
-            "Internet Access",
-            "Extracurricular Participation"
-        ],
-
-        "Type": [
-            "Numeric",
-            "Numeric",
-            "Numeric",
-            "Numeric",
-            "Numeric",
-            "Numeric",
-            "Numeric",
-            "Numeric",
-            "Binary",
-            "Binary"
-        ]
-    })
-
-    st.dataframe(
-        feature_table,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    st.warning(
+    st.markdown(
         """
-        **Responsible-use note:** This application uses synthetic
-        data for demonstration. In a real educational setting,
-        student predictions require appropriate privacy protections,
-        validation, fairness testing, and human oversight.
-        A model should not automatically label, punish, exclude,
-        or deny opportunities to a student.
+        **MAE — Mean Absolute Error**
+
+        Measures the average absolute difference between the
+        actual and predicted risk scores. Lower values indicate
+        smaller average prediction errors.
+
+
+        **MSE — Mean Squared Error**
+
+        Measures the average squared prediction error. Large
+        errors have a greater influence on this metric.
+
+
+        **RMSE — Root Mean Squared Error**
+
+        The square root of MSE. It is expressed in the same
+        units as the risk score.
+
+
+        **R² Score**
+
+        Measures the proportion of variation in the risk score
+        explained by the regression model. Values closer to 1
+        indicate that the model explains more of the variation.
+
+
+        **MAPE — Mean Absolute Percentage Error**
+
+        Measures prediction error as a percentage. Because
+        percentage errors can become unstable when actual
+        values are close to zero, this project calculates MAPE
+        using a small denominator safeguard.
         """
     )
-
 
 # ============================================================
 # FOOTER
@@ -1320,9 +1699,13 @@ elif page == "ℹ️ About Project":
 st.markdown(
     """
     <div class="footer">
+
         EduGuard • School Dropout Risk Analytics<br>
-        Data Thinking + Machine Learning • Educational Demonstration
+
+        Data Thinking + Machine Learning • Regression Demonstration
+
     </div>
     """,
+
     unsafe_allow_html=True
 )
